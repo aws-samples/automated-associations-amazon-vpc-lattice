@@ -1,0 +1,68 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: VPC Lattice Automation - Service Association
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Description: S3 Bucket Name.
+  VPCLatticeResource:
+    Type: String
+    Description: VPC Lattice resource you manage
+    AllowedValues:
+      - Service
+      - ServiceNetwork
+  StageNames:
+    Type: String
+    Description: List of stage names, separated by commas. For example, beta,gamma,prod
+
+Conditions:
+  ServiceAutomation: !Equals
+    - !Ref VPCLatticeResource
+    - Service
+  ServiceNetworkAutomation: !Equals
+    - !Ref VPCLatticeResource
+    - ServiceNetwork
+
+Resources:
+  # --------- VPC LATTICE SERVICE OWNER AUTOMATIONS ----------
+  # Share Service (AWS RAM) by tag
+  ServiceShareStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: ServiceAutomation
+    Properties: 
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/vpclattice_share_service.yaml
+      TimeoutInMinutes: 20
+      Parameters:
+        StageNames: !Ref StageNames
+  
+  # Service Association via RAM
+  ServiceAssociationStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: ServiceAutomation
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/vpclattice_service_association.yaml
+      TimeoutInMinutes: 20
+      Parameters:
+        StageNames: !Ref StageNames
+
+  # --------- VPC LATTICE SERVICE NETWORK OWNER AUTOMATIONS ----------
+  # Share VPC Lattice services (shared)
+  ServiceNetworkStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: VPCAssociation
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/vpclattice_service_network.yaml
+      TimeoutInMinutes: 20
+      Parameters:
+        StageNames: !Ref StageNames
+  
+  # VPC association
+  VPCAssociationStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: VPCAssociation
+    Properties:
+      TemplateURL: !Sub https://${S3BucketName}.s3.amazonaws.com/vpclattice_vpc_association.yaml
+      TimeoutInMinutes: 20
+      Parameters:
+        StageNames: !Ref StageNames
