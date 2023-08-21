@@ -2,11 +2,6 @@ AWSTemplateFormatVersion: "2010-09-09"
 
 Description: VPC Lattice Automation - VPC Association
 
-Parameters:
-  StageNames:
-    Type: String
-    Description: List of stage names, separated by commas. For example, beta,gamma,prod
-
 Resources:
 # ---------- EVENTBRIDGE RULE -----------
   EventBridgeRule:
@@ -85,35 +80,31 @@ Resources:
             reason: No requirement to limit simultaneous executions
     Type: AWS::Lambda::Function
     Properties:
-      Description: Manage route table entry for CoreNetwork
+      Description: Automates VPC Lattice VPC associations
       Runtime: python3.10
       Timeout: 90
       Role: !GetAtt LambdaFuntionRole.Arn
       Handler: index.lambda_handler
-      Environment:
-        Variables:
-          STAGE_NAMES: !Ref StageNames
       Code:
         ZipFile: |-
-          from pip._internal import main
-
-          main(['install', '-I', '-q', 'boto3', '--target', '/tmp/', '--no-cache-dir', '--disable-pip-version-check'])
-          sys.path.insert(0,'/tmp/')
-
           import json
-          import boto3
           import logging
           import os
           import time
+          import sys
+
+          from pip._internal import main
+
+          # ----- TEMPORAL: UPDATE BOTO3 TO HAVE VPC-LATTICE
+          main(['install', '-I', '-q', 'boto3', '--target', '/tmp/', '--no-cache-dir', '--disable-pip-version-check'])
+          sys.path.insert(0,'/tmp/')
+          # -----
+          import boto3
 
           logger = logging.getLogger()
           logger.setLevel(logging.INFO)
 
-          stage_names_env = os.getenv('STAGE_NAMES') or ''
-          stage_names = [k.strip().lower() for k in stage_names_env.split(',')]
-
           vpc_lattice = boto3.client('vpc-lattice')
-
 
           def list_all_service_networks():
               response = vpc_lattice.list_service_networks()
@@ -123,18 +114,96 @@ Resources:
                       nextToken=response['nextToken']
                   )
                   service_networks += response['items']
+              
               return service_networks
-
 
           def get_service_network_for_stage(stage):
               """
               In the off-chance that multiple service networks with the same name are
-              shared to this account, the first one found with the name matching the stage
+              shared to/created in this account, the first one found with the name matching the stage
               will be returned. This is because a VPC can have one service network
               associated to it.
               """
               service_networks = list_all_service_networks()
               return next((sn for sn in service_networks if sn['name'] == stage.lower()), None)
+
+          def get_stage(event):
+              tag_changes = event['detail']['requestParameters']['tagSet']['items']
+              for tag_change in tag_changes:
+                  if tag_change['key'].lower() == 'stage':
+                      return tag_change['value'].lower()
+
+          def handle_create_tags(event, context):
+              # Getting information: VPC ID, stage (from EventBridge event), and VPC Lattice service network
+              vpc_id = event['detail']['requestParameters']['resourcesSet']['items'][0]['resourceId']
+              stage = get_stage(event)
+              service_network = get_service_network_for_stage(stage)
+              
+              # Is our VPC already associated to a VPC Lattice service network?
+              # First, check current associations of the VPC
+              associations = vpc_lattice.list_service_network_vpc_associations(
+                  vpcIdentifier=vpc_id
+              )['items'][:]
+              # If the service network is already the one we want to associate, all good!
+              for a in associations:
+                  if stage in a['serviceNetworkName']:
+                      print()
+                      return {
+                          'statusCode': 409,
+                          'body': {
+                              'message': json.dumps(f'Association for stage already exists: {a}.', default=str)
+                          }
+                      }
+              # Delete association to the previous stage's service network if there was one
+              old_stage_associations = [
+                  a for a in associations
+                  if a['serviceNetworkName'] != stage
+              ]
+              delete_service_network_vpc_associations(old_stage_associations)
+              
+              # If we don't find any VPC Lattice service network with the specific stage name, we throw a Exception 
+              if service_network is None:
+                  raise Exception(f'Could not find service network for stage {stage}.')
+              
+              # Create association to the corresponding service network
+              association = vpc_lattice.create_service_network_vpc_association(
+                  vpcIdentifier=vpc_id,
+                  serviceNetworkIdentifier=service_network['id']
+              )
+
+              
+              logger.info(f'Created association {json.dumps(association, default=str)}')
+              return {
+                  'statusCode': 200,
+                  'body': {
+                      'message': json.dumps(f'Created new association: {association}', default=str)
+                  }
+              }
+
+
+          def handle_delete_tags(event, context):
+              """
+              Deletes a VPC's association with a stage-specific service network.
+              """
+              # Getting information: VPC ID, and stage
+              vpc_id = event['detail']['requestParameters']['resourcesSet']['items'][0]['resourceId']
+              stage = get_stage(event)
+              
+              # We obtain the current service network associated to the VPC
+              associations = vpc_lattice.list_service_network_vpc_associations(
+                  vpcIdentifier=vpc_id
+              )['items']
+              stage_associations = [a for a in associations if a['serviceNetworkName'] == stage]
+              
+              # We remove the VPC association
+              delete_service_network_vpc_associations(stage_associations)
+              
+              return {
+                  'statusCode': 200,
+                  'body': {
+                      'message': json.dumps(f'Deleted associations {associations}', default=str)
+                  }
+              }
 
           def delete_service_network_vpc_associations(associations):
               for association in associations:
@@ -156,84 +225,13 @@ Resources:
                           except vpc_lattice.exceptions.ResourceNotFoundException:
                               time.sleep(1)
                               return
-
-
-          def get_new_stage(event):
-              tag_changes = event['detail']['requestParameters']['tagSet']['items']
-              for tag_change in tag_changes:
-                  if tag_change['key'].lower() == 'stage':
-                      return tag_change['value'].lower()
-
-
-          def handle_create_tags(event, context):
-              vpc_id = event['detail']['requestParameters']['resourcesSet']['items'][0]['resourceId']
-              stage = get_new_stage(event)
               
-              service_network = get_service_network_for_stage(stage)
-              if service_network is None:
-                  raise Exception(f'Could not find service network for stage {stage}.')
-              
-              associations = vpc_lattice.list_service_network_vpc_associations(
-                  vpcIdentifier=vpc_id
-              )['items'][:]
-              
-              for a in associations:
-                  if stage in a['serviceNetworkName']:
-                      return {
-                          'statusCode': 409,
-                          'body': {
-                              'message': json.dumps(f'Association for stage already exists: {a}.', default=str)
-                          }
-                      }
-              
-              old_stage_associations = [
-                  a for a in associations
-                  if a['serviceNetworkName'] in stage_names and a['serviceNetworkName'] != stage
-              ]
-              if len(old_stage_associations) < len(associations):
-                  raise Exception(f'Unrelated service network association exists on this VPC: {json.dumps(associations, default=str)}')
-              
-              # Delete association to the previous stage's service network if there was one
-              delete_service_network_vpc_associations(old_stage_associations)
-
-              association = vpc_lattice.create_service_network_vpc_association(
-                  vpcIdentifier=vpc_id,
-                  serviceNetworkIdentifier=service_network['id']
-              )
-              logger.info(f'Created association {json.dumps(association, default=str)}')
-
-              return {
-                  'statusCode': 200,
-                  'body': {
-                      'message': json.dumps(f'Created new association: {association}', default=str)
-                  }
-              }
-
-
-          def handle_delete_tags(event, context):
-              """
-              Deletes a VPC's association with a stage-specific service network.
-              """
-              vpc_id = event['detail']['requestParameters']['resourcesSet']['items'][0]['resourceId']
-              associations = vpc_lattice.list_service_network_vpc_associations(
-                  vpcIdentifier=vpc_id
-              )['items']
-              
-              stage_associations = [a for a in associations if a['serviceNetworkName'] in stage_names]
-              delete_service_network_vpc_associations(stage_associations)
-              
-              return {
-                  'statusCode': 200,
-                  'body': {
-                      'message': json.dumps(f'Deleted associations {associations}', default=str)
-                  }
-              }
-              
-
           def lambda_handler(event, context):
               logger.info(f'Event: {json.dumps(event)}')
               
+              print(event)
               event_type = event['detail']['eventName']
+              
               if event_type == 'CreateTags':
                   return handle_create_tags(event, context)
               elif event_type == 'DeleteTags':
