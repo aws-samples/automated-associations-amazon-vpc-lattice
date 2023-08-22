@@ -118,7 +118,7 @@ Resources:
 
           path = '/tmp/repo' 
 
-          s3ObjectNames = ['vpc_association', 'service_association', 'share_service']
+          s3ObjectNames = ['vpc_association', 'service_association', 'share_service', 'share_service_network']
           s3ObjectExtension = 'zip'
 
           def lambda_handler(event, context):
@@ -468,8 +468,8 @@ Resources:
       Handler: share_service.lambda_handler
       Environment:
         Variables:
-          ALLOWED_ACCOUNTS: !Ref AllowedAccounts
-          STAGE_NAMES: !Ref AllowedStages
+          ALLOWED_ACCOUNTS: !Ref ShareAutomationAllowedAccounts
+          STAGE_NAMES: !Ref ShareAutomationAllowedStages
       Code:
         S3Bucket: !Ref CodeBucket
         S3Key: lambdacode/share_service.zip
@@ -480,7 +480,7 @@ Resources:
     Type: AWS::Events::Rule
     Condition: ShareServiceNetwork
     Properties:
-      Name: "vpclattice-new-service"
+      Name: "vpclattice-new-service-network"
       Description: "Captures changes in VPC Lattice service tags."
       EventPattern:
         source:
@@ -511,7 +511,7 @@ Resources:
   # IAM Role (Lambda function)
   ShareServiceNetworkLambdaFuntionRole:
     Type: AWS::IAM::Role
-    Condition: ShareService
+    Condition: ShareServiceNetwork
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -547,7 +547,7 @@ Resources:
           - id: W84
             reason: Encryption not required for this log group
     Type: AWS::Logs::LogGroup
-    Condition: ShareService
+    Condition: ShareServiceNetwork
     Properties: 
       LogGroupName: !Sub /aws/lambda/${ShareServiceNetworkFunction}
       RetentionInDays: 7
@@ -564,17 +564,17 @@ Resources:
           - id: W92
             reason: No requirement to limit simultaneous executions
     Type: AWS::Lambda::Function
-    Condition: ShareService
+    Condition: ShareServiceNetwork
     Properties:
       Description: Share VPC Lattice services.
       Runtime: python3.10
       Timeout: 30
-      Role: !GetAtt ShareServiceLambdaFuntionRole.Arn
+      Role: !GetAtt ShareServiceNetworkLambdaFuntionRole.Arn
       Handler: share_service_network.lambda_handler
       Environment:
         Variables:
-          ALLOWED_ACCOUNTS: !Ref AllowedAccounts
-          STAGE_NAMES: !Ref AllowedStages
+          ALLOWED_ACCOUNTS: !Ref ShareAutomationAllowedAccounts
+          STAGE_NAMES: !Ref ShareAutomationAllowedStages
       Code:
         S3Bucket: !Ref CodeBucket
         S3Key: lambdacode/share_service_network.zip
