@@ -28,14 +28,14 @@ def handle_create_tags(event, context):
     Delete's a service's existing stage-based resource shares and creates
     a new one with the new stage name.
     """
-    service_arn = event['resources'][0]
+    service_network_arn = event['resources'][0]
     stage = get_stage(event)
 
     existing_shares = ram.get_resource_shares(
         resourceOwner='SELF',
         tagFilters=[{
             'tagKey': 'serviceId',
-            'tagValues': [service_arn.split('/')[-1]]
+            'tagValues': [service_network_arn.split('/')[-1]]
         }]
     )['resourceShares']
               
@@ -59,10 +59,10 @@ def handle_create_tags(event, context):
     share = ram.create_resource_share(
         name=stage,
         principals=allowed_accounts,
-        resourceArns=[service_arn],
+        resourceArns=[service_network_arn],
         tags=[{
             'key': 'serviceId',
-            'value': service_arn.split('/')[-1]
+            'value': service_network_arn.split('/')[-1]
         }]
     )
     logger.info(f'Created new resource share {json.dumps(share, default=str)}')
@@ -79,12 +79,12 @@ def handle_delete_tags(event, context):
     """
     Deletes a service's stage-based resource shares.
      """
-    service_arn = event['resources'][0]
+    service_network_arn = event['resources'][0]
     existing_shares = ram.get_resource_shares(
         resourceOwner='SELF',
         tagFilters=[{
             'tagKey': 'serviceId',
-            'tagValues': [service_arn.split('/')[-1]]
+            'tagValues': [service_network_arn.split('/')[-1]]
         }]
     )['resourceShares']
               

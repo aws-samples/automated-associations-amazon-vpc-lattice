@@ -6,41 +6,58 @@ Parameters:
   GitRepo:
     Type: String
     Default: https://github.com/aws-samples/automated-associations-amazon-vpc-lattice
-  VPCAutomation:
+  VPCLatticeAssociation:
     Type: String
-    Description: Do you want to automate the VPC association to a VPC Lattice service network?
+    Description: VPC Lattice association to automate (using tags)
     AllowedValues:
-      - "YES"
-      - "NO"
-  ServiceAutomation:
+      - VPC
+      - SERVICE
+      - BOTH
+      - NONE
+  ShareAutomation:
     Type: String
-    Description: Do you want to automate the VPC Lattice service association to a VPC Lattice service network?
+    Description: VPC Lattice resource you want to share (using tags)
     AllowedValues:
-      - "YES"
-      - "NO"
-  ShareServiceAutomation:
+      - SERVICE_NETWORK
+      - SERVICE
+      - BOTH
+      - NONE
+  ShareAutomationAllowedAccounts:
     Type: String
-    Description: Do you want to automate sharing the VPC Lattice services you create?
-    AllowedValues:
-      - "YES"
-      - "NO"
-  AllowedAccounts:
+    Description: (If automating VPC Lattice RAM share) Provide list of AWS Accounts to share your resources, divided by comma (Account1,Account2)
+  ShareAutomationAllowedStages:
     Type: String
-    Description: (For multi-Account automations) Provide the list of AWS Accounts you want to perform the VPC Lattice automation(s) - Example; AccountA,AccountB.
-  AllowedStages:
-    Type: String
-    Description: (For multi-Account automations) Provide the list of stages you want to allow multi-Account automation(s) - Example; prod,test.
-  
+    Description: (If automating VPC Lattice RAM share) Provide list of stages allowed to shared, divided by comma (stage1,stage2)
+
 Conditions:
-  VPCAssociation: !Equals
-    - !Ref VPCAutomation
-    - "YES"
-  ServiceAssociation: !Equals
-    - !Ref ServiceAutomation
-    - "YES"
-  ShareService: !Equals
-    - !Ref ShareServiceAutomation
-    - "YES"
+  VPCAssociation: !Or
+    - !Equals
+      - !Ref VPCLatticeAssociation
+      - VPC
+    - !Equals
+      - !Ref VPCLatticeAssociation
+      - BOTH
+  ServiceAssociation: !Or
+    - !Equals
+      - !Ref VPCLatticeAssociation
+      - SERVICE
+    - !Equals
+      - !Ref VPCLatticeAssociation
+      - BOTH
+  ShareService: !Or
+    - !Equals
+      - !Ref ShareAutomation
+      - SERVICE
+    - !Equals
+      - !Ref VPCLatticeAssociation
+      - BOTH
+  ShareServiceNetwork: !Or
+    - !Equals
+      - !Ref ShareAutomation
+      - SERVICE_NETWORK
+    - !Equals
+      - !Ref VPCLatticeAssociation
+      - BOTH
 
 Resources:
   # ---------- MOVE PYTHON CODE TO S3 (ZIP FILES) ----------
@@ -456,4 +473,108 @@ Resources:
       Code:
         S3Bucket: !Ref CodeBucket
         S3Key: lambdacode/share_service.zip
-          
+
+  # ---------- SHARE VPC LATTICE SERVICE NETWORKS (TO ALLOWED AWS ACCOUNTS) ----------
+  # EventBridge Rule
+  ShareServiceNetworkEventBridgeRule:
+    Type: AWS::Events::Rule
+    Condition: ShareServiceNetwork
+    Properties:
+      Name: "vpclattice-new-service"
+      Description: "Captures changes in VPC Lattice service tags."
+      EventPattern:
+        source:
+          - aws.tag
+        detail-type: 
+          - "Tag Change on Resource"
+        detail:
+          changed-tag-keys:
+            - equals-ignore-case: stage
+          service:
+            - vpc-lattice
+          resource-type:
+            - service-network
+      Targets:
+        - Arn: !GetAtt ShareServiceNetworkFunction.Arn
+          Id: "LambdaFunction"
+  
+  # Lambda permission (for the EventBridge rule)
+  ShareServiceNetworkEventBridgeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Condition: ShareServiceNetwork
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ShareServiceNetworkFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ShareServiceNetworkEventBridgeRule.Arn
+
+  # IAM Role (Lambda function)
+  ShareServiceNetworkLambdaFuntionRole:
+    Type: AWS::IAM::Role
+    Condition: ShareService
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowLatticeActions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ram:GetResourceShares
+                  - ram:CreateResourceShare
+                  - ram:DeleteResourceShare
+                  - ram:TagResource
+                  - vpc-lattice:PutResourcePolicy
+                Resource:
+                  - "*"
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  # CloudWatch Log Group
+  ShareServiceNetworkLambdaFunctionLogGroup:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W84
+            reason: Encryption not required for this log group
+    Type: AWS::Logs::LogGroup
+    Condition: ShareService
+    Properties: 
+      LogGroupName: !Sub /aws/lambda/${ShareServiceNetworkFunction}
+      RetentionInDays: 7
+
+  # Function
+  ShareServiceNetworkFunction:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: CWL permissions granted by use of AWSLambdaBasicExecutionRole
+          - id: W89
+            reason: No requirement for this function to be in a VPC
+          - id: W92
+            reason: No requirement to limit simultaneous executions
+    Type: AWS::Lambda::Function
+    Condition: ShareService
+    Properties:
+      Description: Share VPC Lattice services.
+      Runtime: python3.10
+      Timeout: 30
+      Role: !GetAtt ShareServiceLambdaFuntionRole.Arn
+      Handler: share_service_network.lambda_handler
+      Environment:
+        Variables:
+          ALLOWED_ACCOUNTS: !Ref AllowedAccounts
+          STAGE_NAMES: !Ref AllowedStages
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: lambdacode/share_service_network.zip
