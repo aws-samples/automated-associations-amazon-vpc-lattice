@@ -4,6 +4,7 @@ import json
 import logging
 import time
 import sys
+import os
 
 from pip._internal import main
 
@@ -17,6 +18,9 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 vpc_lattice = boto3.client('vpc-lattice')
+ssm = boto3.client('ssm')
+
+parameter_name = os.environ.get("PARAMETER_NAME")
 
 @lru_cache(maxsize=None)
 def list_all_service_networks():
@@ -29,7 +33,6 @@ def list_all_service_networks():
         service_networks += response['items']
     return service_networks
 
-
 def get_service_network_for_stage(stage):
     """
     In the off-chance that multiple service networks with the same name are
@@ -39,12 +42,14 @@ def get_service_network_for_stage(stage):
     service_networks = list_all_service_networks()
     return next((sn for sn in service_networks if sn['name'] == stage.lower()), None)
 
-
 def get_stage(event):
     tags = event['detail']['tags']
     for k, v in tags.items():
         if k.lower() == 'stage':
             return v.lower()
+
+def get_current_stage():
+    return ssm.get_parameter(Name=parameter_name)['Parameter']['Value']
 
 def handle_create_tags(event, context):
     # Getting information: VPC Lattice service ARN, stage, and VPC Lattice service network
@@ -66,12 +71,14 @@ def handle_create_tags(event, context):
             }
         }
 
-    # Delete association to the previous stage's service network if there was one
-    old_stage_associations = [
-        a for a in associations
-        if a['serviceNetworkName'] in stage_names and a['serviceNetworkName'] != stage
-    ]
-    delete_service_network_service_associations(old_stage_associations)
+    # If there's already an association to a Service Network, we remove that association
+    current_stage = get_current_stage()
+    if current_stage != ' ':
+        old_stage_associations = [
+            a for a in associations
+            if a['serviceNetworkName'] == current_stage
+        ]
+        delete_service_network_service_associations(old_stage_associations)
 
     # If we don't find any VPC Lattice service network with the specific stage name, we throw a Exception 
     if service_network is None:
@@ -81,6 +88,12 @@ def handle_create_tags(event, context):
     association = vpc_lattice.create_service_network_service_association(
         serviceIdentifier=service_arn,
         serviceNetworkIdentifier=service_network['id']
+    )
+    # We update the parameter with the new stage
+    udpate_parameter = ssm.put_parameter(
+        Name = parameter_name,
+        Value = stage,
+        Overwrite=True
     )
     
     logger.info(f'Created association {json.dumps(association, default=str)}')
@@ -99,8 +112,6 @@ def delete_service_network_service_associations(associations):
         )
         logger.info(f'Deleted association {json.dumps(association, default=str)}')
 
-
-
 def handle_delete_tags(event, context):
     """
     Deletes a service's associations with all stage-specific service networks.
@@ -110,8 +121,18 @@ def handle_delete_tags(event, context):
         serviceIdentifier=service_arn
     )['items'][:]
 
-    stage_associations = [a for a in associations if a['serviceNetworkName'] in stage_names]
+    # We get current stage
+    current_stage = get_current_stage()
+    # We obtain the associations
+    stage_associations = [a for a in associations if a['serviceNetworkName'] == current_stage]
     delete_service_network_service_associations(stage_associations)
+
+    # We update the parameter with an 'empty stage'
+    udpate_parameter = ssm.put_parameter(
+        Name = parameter_name,
+        Value = ' ',
+        Overwrite=True
+    )
 
     return {
         'statusCode': 200,

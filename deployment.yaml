@@ -18,10 +18,28 @@ Parameters:
     AllowedValues:
       - "YES"
       - "NO"
+  ShareServiceAutomation:
+    Type: String
+    Description: Do you want to automate sharing the VPC Lattice services you create?
+    AllowedValues:
+      - "YES"
+      - "NO"
+  AllowedAccounts:
+    Type: String
+    Description: (For multi-Account automations) Provide the list of AWS Accounts you want to perform the VPC Lattice automation(s) - Example; AccountA,AccountB.
+  AllowedStages:
+    Type: String
+    Description: (For multi-Account automations) Provide the list of stages you want to allow multi-Account automation(s) - Example; prod,test.
   
 Conditions:
   VPCAssociation: !Equals
     - !Ref VPCAutomation
+    - "YES"
+  ServiceAssociation: !Equals
+    - !Ref ServiceAutomation
+    - "YES"
+  ShareService: !Equals
+    - !Ref ShareServiceAutomation
     - "YES"
 
 Resources:
@@ -36,10 +54,10 @@ Resources:
             Fn::Select: [0, Fn::Split: [-, Fn::Select: [2, Fn::Split: [/, !Ref AWS::StackId ]]]] # Takes the first part of the random GUID in the cloudformation stacks arn.
       AccessControl: Private
 
-  # GitRepoToS3CustomResource:
-  #   Type: Custom::GitRepoToS3
-  #   Properties:
-  #     ServiceToken: !GetAtt GitRepoToS3Lambda.Arn
+  GitRepoToS3CustomResource:
+    Type: Custom::GitRepoToS3
+    Properties:
+      ServiceToken: !GetAtt GitRepoToS3Lambda.Arn
 
   GitRepoToS3LambdaRole:
     Type: AWS::IAM::Role
@@ -83,12 +101,8 @@ Resources:
 
           path = '/tmp/repo' 
 
-          s3ObjectNames = ['vpc_association', 'service_association']
+          s3ObjectNames = ['vpc_association', 'service_association', 'share_service']
           s3ObjectExtension = 'zip'
-          vpcAssociations3ObjectName = 'vpc_association'
-
-
-          vpcAssociations3ObjectFullName = vpcAssociations3ObjectName + '.' + s3ObjectExtension
 
           def lambda_handler(event, context):
               response_data = {}
@@ -135,8 +149,8 @@ Resources:
   # ---------- VPC ASSOCIATION ----------
   # EventBridge Rule
   VPCAssociationEventBridgeRule:
-    Condition: VPCAssociation
     Type: AWS::Events::Rule
+    Condition: VPCAssociation
     Properties:
       Name: "vpc-tags"
       Description: "Capture Changes in VPC Tags."
@@ -147,8 +161,8 @@ Resources:
   
   # Lambda permission (for the EventBridge rule)
   VPCAssociationEventBridgeLambdaPermission:
-    Condition: VPCAssociation
     Type: AWS::Lambda::Permission
+    Condition: VPCAssociation
     Properties:
       Action: lambda:InvokeFunction
       FunctionName: !Ref VPCAssociationFunction
@@ -157,8 +171,8 @@ Resources:
 
   # Lambda Function: IAM Role
   VPCAssociationLambdaFuntionRole:
-    Condition: VPCAssociation
     Type: AWS::IAM::Role
+    Condition: VPCAssociation
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -189,13 +203,13 @@ Resources:
 
   # CloudWatch Log Group
   VPCAssociationLambdaFunctionLogGroup:
-    Condition: VPCAssociation
     Metadata:
       cfn_nag:
         rules_to_suppress:
           - id: W84
             reason: Encryption not required for this log group
     Type: AWS::Logs::LogGroup
+    Condition: VPCAssociation
     Properties: 
       LogGroupName: !Sub /aws/lambda/${VPCAssociationFunction}
       RetentionInDays: 7
@@ -211,15 +225,235 @@ Resources:
             reason: No requirement for this function to be in a VPC
           - id: W92
             reason: No requirement to limit simultaneous executions
-    Condition: VPCAssociation
     Type: AWS::Lambda::Function
+    Condition: VPCAssociation
     Properties:
       Description: Automates VPC Lattice VPC associations
       Runtime: python3.10
       Timeout: 90
       Role: !GetAtt VPCAssociationLambdaFuntionRole.Arn
-      Handler: index.lambda_handler
+      Handler: vpc_association.lambda_handler
       Code:
         S3Bucket: !Ref CodeBucket
         S3Key: lambdacode/vpc_association.zip
+
+  # ---------- VPC LATTICE SERVICE ASSOCIATION ----------
+  # EventBridge Rule
+  ServiceAssociationEventBridgeRule:
+    Type: AWS::Events::Rule
+    Condition: ServiceAssociation
+    Properties:
+      Name: "vpclattice-service-tags"
+      Description: "Capture Changes VPC Lattice Service Tags."
+      EventPattern:
+        source:
+          - aws.tag
+        detail-type: 
+          - "Tag Change on Resource"
+        detail:
+          changed-tag-keys:
+            - equals-ignore-case: stage
+          service:
+            - vpc-lattice
+          resource-type:
+            - service
+      Targets:
+        - Arn: !GetAtt ServiceAssociationFunction.Arn
+          Id: "LambdaFunction"
+  
+  # Lambda permission (for the EventBridge rule)
+  ServiceAssociationEventBridgeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Condition: ServiceAssociation
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ServiceAssociationFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ServiceAssociationEventBridgeRule.Arn
+
+  # IAM Role (Lambda Function)
+  ServiceAssociationLambdaFuntionRole:
+    Type: AWS::IAM::Role
+    Condition: ServiceAssociation
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowLatticeActions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - vpc-lattice:ListServiceNetworks
+                  - vpc-lattice:ListServiceNetworkServiceAssociations
+                  - vpc-lattice:CreateServiceNetworkServiceAssociation
+                  - vpc-lattice:DeleteServiceNetworkServiceAssociation
+                  - ssm:GetParameter
+                  - ssm:PutParameter
+                Resource:
+                  - "*"
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  # CloudWatch Log Group
+  ServiceAssociationLambdaFunctionLogGroup:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W84
+            reason: Encryption not required for this log group
+    Type: AWS::Logs::LogGroup
+    Condition: ServiceAssociation
+    Properties: 
+      LogGroupName: !Sub /aws/lambda/${ServiceAssociationFunction}
+      RetentionInDays: 7
+
+  # Systems Manager Parameter
+  ServiceAssociationParameter:
+    Type: AWS::SSM::Parameter
+    Condition: ServiceAssociation
+    Properties:
+      Name: 'service-association-current-stage'
+      Description: Current stage in the VPC Lattice service association automation
+      Type: String
+      Value: ' '
+
+  # Function
+  ServiceAssociationFunction:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: CWL permissions granted by use of AWSLambdaBasicExecutionRole
+          - id: W89
+            reason: No requirement for this function to be in a VPC
+          - id: W92
+            reason: No requirement to limit simultaneous executions
+    Type: AWS::Lambda::Function
+    Condition: ServiceAssociation
+    Properties:
+      Description: Automates VPC Lattice service associations
+      Runtime: python3.10
+      Timeout: 30
+      Role: !GetAtt ServiceAssociationLambdaFuntionRole.Arn
+      Handler: service_association.lambda_handler
+      Environment:
+        Variables:
+          PARAMETER_NAME: 'service-association-current-stage'
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: lambdacode/service_association.zip
+
+  # ---------- SHARE VPC LATTICE SERVICES (TO ALLOWED AWS ACCOUNTS) ----------
+  # EventBridge Rule
+  ShareServiceEventBridgeRule:
+    Type: AWS::Events::Rule
+    Condition: ShareService
+    Properties:
+      Name: "vpclattice-new-service"
+      Description: "Captures changes in VPC Lattice service tags."
+      EventPattern:
+        source:
+          - aws.tag
+        detail-type: 
+          - "Tag Change on Resource"
+        detail:
+          changed-tag-keys:
+            - equals-ignore-case: stage
+          service:
+            - vpc-lattice
+          resource-type:
+            - service
+      Targets:
+        - Arn: !GetAtt ShareServiceFunction.Arn
+          Id: "LambdaFunction"
+  
+  # Lambda permission (for the EventBridge rule)
+  ShareServiceEventBridgeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Condition: ShareService
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ShareServiceFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ShareServiceEventBridgeRule.Arn
+
+  # IAM Role (Lambda function)
+  ShareServiceLambdaFuntionRole:
+    Type: AWS::IAM::Role
+    Condition: ShareService
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowLatticeActions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ram:GetResourceShares
+                  - ram:CreateResourceShare
+                  - ram:DeleteResourceShare
+                  - ram:TagResource
+                  - vpc-lattice:PutResourcePolicy
+                Resource:
+                  - "*"
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  # CloudWatch Log Group
+  ShareServiceLambdaFunctionLogGroup:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W84
+            reason: Encryption not required for this log group
+    Type: AWS::Logs::LogGroup
+    Condition: ShareService
+    Properties: 
+      LogGroupName: !Sub /aws/lambda/${ShareServiceFunction}
+      RetentionInDays: 7
+
+  # Function
+  ShareServiceFunction:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: CWL permissions granted by use of AWSLambdaBasicExecutionRole
+          - id: W89
+            reason: No requirement for this function to be in a VPC
+          - id: W92
+            reason: No requirement to limit simultaneous executions
+    Type: AWS::Lambda::Function
+    Condition: ShareService
+    Properties:
+      Description: Share VPC Lattice services.
+      Runtime: python3.10
+      Timeout: 30
+      Role: !GetAtt ShareServiceLambdaFuntionRole.Arn
+      Handler: share_service.lambda_handler
+      Environment:
+        Variables:
+          ALLOWED_ACCOUNTS: !Ref AllowedAccounts
+          STAGE_NAMES: !Ref AllowedStages
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: lambdacode/share_service.zip
           
