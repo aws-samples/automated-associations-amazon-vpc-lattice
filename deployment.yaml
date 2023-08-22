@@ -1,0 +1,225 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: VPC Lattice Automation - Deployment Templates
+
+Parameters:
+  GitRepo:
+    Type: String
+    Default: https://github.com/aws-samples/automated-associations-amazon-vpc-lattice
+  VPCAutomation:
+    Type: String
+    Description: Do you want to automate the VPC association to a VPC Lattice service network?
+    AllowedValues:
+      - "YES"
+      - "NO"
+  ServiceAutomation:
+    Type: String
+    Description: Do you want to automate the VPC Lattice service association to a VPC Lattice service network?
+    AllowedValues:
+      - "YES"
+      - "NO"
+  
+Conditions:
+  VPCAssociation: !Equals
+    - !Ref VPCAutomation
+    - "YES"
+
+Resources:
+  # ---------- MOVE PYTHON CODE TO S3 (ZIP FILES) ----------
+  CodeBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub 
+        - lambda-code-${AWS::Region}-${AWS::AccountId}-${RandomizedValue}
+        - RandomizedValue:
+            Fn::Select: [0, Fn::Split: [-, Fn::Select: [2, Fn::Split: [/, !Ref AWS::StackId ]]]] # Takes the first part of the random GUID in the cloudformation stacks arn.
+      AccessControl: Private
+
+  # GitRepoToS3CustomResource:
+  #   Type: Custom::GitRepoToS3
+  #   Properties:
+  #     ServiceToken: !GetAtt GitRepoToS3Lambda.Arn
+
+  GitRepoToS3LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub ${CodeBucket.Arn}/lambdacode/*
+          PolicyName: PutS3Object
+
+  GitRepoToS3Lambda:
+    Type: AWS::Lambda::Function
+    Properties: 
+      Description: Lambda to be triggered by Cloudformation Custom resource to copy GitHub repo to S3 bucket.
+      Code: 
+        ZipFile: |
+          import boto3
+          import logging
+          import os
+          import shutil
+          import cfnresponse
+          s3 = boto3.client('s3')
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          # Getting Repository link and S3 Bucket
+          repo = os.environ['GitRepo']
+          s3Bucket = os.environ['s3Bucket']
+
+          path = '/tmp/repo' 
+
+          s3ObjectNames = ['vpc_association', 'service_association']
+          s3ObjectExtension = 'zip'
+          vpcAssociations3ObjectName = 'vpc_association'
+
+
+          vpcAssociations3ObjectFullName = vpcAssociations3ObjectName + '.' + s3ObjectExtension
+
+          def lambda_handler(event, context):
+              response_data = {}
+              try:
+                  logger.info('Create path and change working directory to: %s' % (path))
+                  os.mkdir(path)
+                  os.chdir(path)
+                  logger.info('Clone the repository: %s to: %s' % (repo, path))
+                  os.system('git clone ' + repo + ' cloned-repo')
+                  shutil.rmtree('cloned-repo/.git')
+                  logger.info('Clone complete. Files in working directory:')
+                  logger.info(os.listdir(os.getcwd()))
+                  
+                  logger.info('Create Zip from repo')
+                  for i in s3ObjectNames:
+                    dir = './' + i +'.py'
+                    s3ObjectFullName = i + '.' + s3ObjectExtension
+                    shutil.make_archive(i, s3ObjectExtension,'cloned-repo/lambda_code',dir)
+                    #shutil.make_archive(vpcAssociations3ObjectName, s3ObjectExtension,'cloned-repo','./lambda_code/vpc-association.py')
+                    logger.info('Created zip from repo. Files in working directory:')
+                    logger.info(os.listdir(os.getcwd()))
+                    logger.info('Uploading %s to S3://%s/%s' % (s3ObjectFullName, s3Bucket, 'lambdacode/'+s3ObjectFullName))
+                    s3.upload_file(os.getcwd() + '/' + s3ObjectFullName, s3Bucket, 'lambdacode/'+s3ObjectFullName)
+                  
+                  logger.info('Upload Complete. Cleaning directory')
+                  shutil.rmtree(path)
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+              except Exception as e:
+                  logger.error('Execution failed...')
+                  logger.error(str(e))
+                  response_data['Data'] = str(e)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, response_data)
+      Environment: 
+        Variables:
+          GitRepo: !Ref GitRepo
+          s3Bucket: !Ref CodeBucket
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      Layers: 
+        - !Sub arn:aws:lambda:${AWS::Region}:553035198032:layer:git-lambda2:8 # https://github.com/lambci/git-lambda-layer
+      MemorySize: 1024
+      Role: !GetAtt GitRepoToS3LambdaRole.Arn
+
+  # ---------- VPC ASSOCIATION ----------
+  # EventBridge Rule
+  VPCAssociationEventBridgeRule:
+    Condition: VPCAssociation
+    Type: AWS::Events::Rule
+    Properties:
+      Name: "vpc-tags"
+      Description: "Capture Changes in VPC Tags."
+      EventPattern: "{\"source\":[\"aws.ec2\"],\"detail-type\":[\"AWS API Call via CloudTrail\"],\"detail\":{\"eventSource\":[\"ec2.amazonaws.com\"],\"eventName\":[\"CreateTags\",\"DeleteTags\"],\"requestParameters\":{\"resourcesSet\":{\"items\":{\"resourceId\":[{\"prefix\":\"vpc-\"}]}},\"tagSet\":{\"items\":{\"key\":[{\"equals-ignore-case\":\"stage\"}]}}}}}"
+      Targets:
+        - Arn: !GetAtt VPCAssociationFunction.Arn
+          Id: "LambdaFunction"
+  
+  # Lambda permission (for the EventBridge rule)
+  VPCAssociationEventBridgeLambdaPermission:
+    Condition: VPCAssociation
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref VPCAssociationFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt VPCAssociationEventBridgeRule.Arn
+
+  # Lambda Function: IAM Role
+  VPCAssociationLambdaFuntionRole:
+    Condition: VPCAssociation
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowLatticeActions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - vpc-lattice:ListServiceNetworks
+                  - vpc-lattice:ListServiceNetworkVpcAssociations
+                  - vpc-lattice:GetServiceNetworkVpcAssociation
+                  - vpc-lattice:CreateServiceNetworkVpcAssociation
+                  - vpc-lattice:DeleteServiceNetworkVpcAssociation
+                  - ec2:DescribeVpcs
+                Resource:
+                  - "*"
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  # CloudWatch Log Group
+  VPCAssociationLambdaFunctionLogGroup:
+    Condition: VPCAssociation
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W84
+            reason: Encryption not required for this log group
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub /aws/lambda/${VPCAssociationFunction}
+      RetentionInDays: 7
+
+  # Function
+  VPCAssociationFunction:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: CWL permissions granted by use of AWSLambdaBasicExecutionRole
+          - id: W89
+            reason: No requirement for this function to be in a VPC
+          - id: W92
+            reason: No requirement to limit simultaneous executions
+    Condition: VPCAssociation
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Automates VPC Lattice VPC associations
+      Runtime: python3.10
+      Timeout: 90
+      Role: !GetAtt VPCAssociationLambdaFuntionRole.Arn
+      Handler: index.lambda_handler
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: lambdacode/vpc_association.zip
+          
