@@ -28,6 +28,20 @@ Parameters:
   ShareAutomationAllowedStages:
     Type: String
     Description: (If automating VPC Lattice RAM share) Provide list of stages allowed to shared, divided by comma (stage1,stage2)
+  AcceptShareAutomation:
+    Type: String
+    Description: VPC Lattice resource (shared with you) you want to accept.
+    AllowedValues:
+      - SERVICE_NETWORK
+      - SERVICE
+      - BOTH
+      - NONE
+  AcceptShareAutomationAllowedAccounts:
+    Type: String
+    Description: (If automating RAM share acceptance) Provide list of AWS Accounts to accept resources shared, divided by comma (Account1,Account2)
+  AcceptShareAutomationAllowedStages:
+    Type: String
+    Description: (If automating RAM share acceptance) Provide list of stages allowed to accept shared resources, divided by comma (stage1,stage2)
 
 Conditions:
   VPCAssociation: !Or
@@ -57,6 +71,13 @@ Conditions:
       - SERVICE_NETWORK
     - !Equals
       - !Ref VPCLatticeAssociation
+      - BOTH
+  AcceptSharedService: !Or
+    - !Equals
+      - !Ref AcceptShareAutomation
+      - SERVICE
+    - !Equals
+      - !Ref AcceptShareAutomation
       - BOTH
 
 Resources:
@@ -118,7 +139,7 @@ Resources:
 
           path = '/tmp/repo' 
 
-          s3ObjectNames = ['vpc_association', 'service_association', 'share_service', 'share_service_network']
+          s3ObjectNames = ['vpc_association', 'service_association', 'share_service', 'share_service_network', 'accept_associate_shared_service']
           s3ObjectExtension = 'zip'
 
           def lambda_handler(event, context):
@@ -578,3 +599,113 @@ Resources:
       Code:
         S3Bucket: !Ref CodeBucket
         S3Key: lambdacode/share_service_network.zip
+
+  # ---------- ACCEPT SHARED VPC LATTICE SERVICES ----------
+  # EventBridge Scheduler
+  AcceptSharedServiceScheduler:
+    Type: AWS::Scheduler::Schedule
+    Condition: AcceptSharedService
+    Properties:
+      Name: "accept-shared-services"
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      ScheduleExpression: "rate(1 minute)"
+      Target:
+        Arn: !GetAtt AcceptSharedServiceFunction.Arn
+        RoleArn: !GetAtt AcceptSharedServiceSchedulerRole.Arn
+
+  AcceptSharedServiceSchedulerRole:
+    Type: AWS::IAM::Role
+    Condition: AcceptSharedService
+    Properties:
+      Description: "EventBridge Scheduler - IAM Role (AcceptSharedService)"
+      RoleName: accept-scheduler-shared-services
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - scheduler.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: accept-scheduler-shared-services
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: "lambda:InvokeFunction"
+                Resource: !GetAtt AcceptSharedServiceFunction.Arn
+
+  # IAM Roles (Lambda function)
+  AcceptSharedServiceLambdaFuntionRole:
+    Type: AWS::IAM::Role
+    Condition: AcceptSharedService
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowLatticeActions-Associate
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ram:AcceptResourceShareInvitation
+                  - ram:GetResourceShareInvitations
+                  - ram:GetResourceShares
+                  - ram:ListResources
+                  - vpc-lattice:ListServiceNetworks
+                  - vpc-lattice:CreateServiceNetworkServiceAssociation
+                  - vpc-lattice:ListServiceNetworkServiceAssociations
+                Resource:
+                  - "*"
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  # CloudWatch Log Group
+  AcceptSharedServiceLambdaFunctionLogGroup:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W84
+            reason: Encryption not required for this log group
+    Type: AWS::Logs::LogGroup
+    Condition: AcceptSharedService
+    Properties: 
+      LogGroupName: !Sub /aws/lambda/${AcceptSharedServiceFunction}
+      RetentionInDays: 7
+
+  # Function
+  AcceptSharedServiceFunction:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: CWL permissions granted by use of AWSLambdaBasicExecutionRole
+          - id: W89
+            reason: No requirement for this function to be in a VPC
+          - id: W92
+            reason: No requirement to limit simultaneous executions
+    Type: AWS::Lambda::Function
+    Condition: AcceptSharedService
+    Properties:
+      Description: Associate shared VPC Lattice services to the service network.
+      Runtime: python3.10
+      Timeout: 30
+      Role: !GetAtt AcceptSharedServiceLambdaFuntionRole.Arn
+      Handler: index.lambda_handler
+      Environment:
+        Variables:
+          STAGE_NAMES: !Ref StageNames
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: lambdacode/accept_associate_shared_service.zip
