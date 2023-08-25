@@ -49,6 +49,9 @@ def lambda_handler(event, context):
     
     for invitation in invitations:
         accept_pending_resource_share_invitation(invitation)
+    # We wait 5 seconds for avoid skipping recently accepted shared resources
+    time.sleep(5)
+    # Association of all accepted resources
     associate_services_from_accepted_resource_shares()
     return {
         'statusCode': 200,
@@ -130,7 +133,6 @@ def associate_services_from_accepted_resource_share(share):
     share_arn = share['resourceShareArn']
     share_sender_account = share['owningAccountId']
     logger.info(f"Processing Accepted Resource Share {share_arn}, named {share_name}, from {share_sender_account}")
-    
     
     if allowlist_enabled and share_sender_account not in allowlist:
         logger.info(f'Share sender is not in allowlist. Ignoring Share {share_arn}.')

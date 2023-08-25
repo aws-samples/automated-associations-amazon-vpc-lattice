@@ -19,20 +19,22 @@ ram_client = boto3.client('ram')
 vpc_lattice_client = boto3.client('vpc-lattice')
 ssm_client = boto3.client('ssm')
 
-stage_to_network_parameter = os.getevn('PARAMETER_NAME')
+stage_to_network_parameter = os.getenv('PARAMETER_NAME')
 
 def lambda_handler(event, context):
     # We obtain the map of stages and service networks from SSM Parameter
-    stage_to_network_dict = json.loads(ssm_client.get_parameter(Name=stage_to_network_parameter)['Parameter']['Value'])
-    
+    stage_to_network = ssm_client.get_parameter(Name=stage_to_network_parameter)['Parameter']['Value']
+    stage_to_network_dict = json.loads(stage_to_network)
+    # Obtaining current VPC Lattice service associations in the services networks retrieved
     associations = []
     for service_network_arn in stage_to_network_dict.values():
         associations.extend(get_service_associations(service_network_arn))
     logger.info(f'Found service associations {json.dumps(associations, default=str)}')
-
+    # Getting current VPC Lattice services shared (via RAM)
     service_arns = get_shared_service_arns()
     logger.info(f'Found shared service arns {service_arns}')
 
+    # For those VPC Lattice services associated that are no longer shared with the Account, we remove them
     num_associations_deleted = 0
     for association in associations:
         if association['serviceArn'] not in service_arns:

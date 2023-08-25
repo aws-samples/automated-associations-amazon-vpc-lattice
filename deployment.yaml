@@ -254,6 +254,7 @@ Resources:
 
   # Function
   VPCAssociationFunction:
+    DependsOn: GitRepoToS3CustomResource
     Metadata:
       cfn_nag:
         rules_to_suppress:
@@ -366,6 +367,7 @@ Resources:
 
   # Function
   ServiceAssociationFunction:
+    DependsOn: GitRepoToS3CustomResource
     Metadata:
       cfn_nag:
         rules_to_suppress:
@@ -470,6 +472,7 @@ Resources:
 
   # Function
   ShareServiceFunction:
+    DependsOn: GitRepoToS3CustomResource
     Metadata:
       cfn_nag:
         rules_to_suppress:
@@ -575,6 +578,7 @@ Resources:
 
   # Function
   ShareServiceNetworkFunction:
+    DependsOn: GitRepoToS3CustomResource
     Metadata:
       cfn_nag:
         rules_to_suppress:
@@ -699,6 +703,7 @@ Resources:
 
   # Function
   AcceptSharedServiceFunction:
+    DependsOn: GitRepoToS3CustomResource
     Metadata:
       cfn_nag:
         rules_to_suppress:
@@ -715,7 +720,7 @@ Resources:
       Runtime: python3.10
       Timeout: 30
       Role: !GetAtt AcceptSharedServiceLambdaFuntionRole.Arn
-      Handler: accept_associate_shared_service.lambda_handler
+      Handler: accept_shared_service.lambda_handler
       Environment:
         Variables:
           ALLOWED_ACCOUNTS: !Ref AcceptShareAutomationAllowedAccounts
@@ -724,7 +729,7 @@ Resources:
           PARAMETER_NAME: !Ref AcceptSharedServiceParameter
       Code:
         S3Bucket: !Ref CodeBucket
-        S3Key: lambdacode/accept_associate_shared_service.zip
+        S3Key: lambdacode/accept_shared_service.zip
   
   # ---------- DISASSOCIATE UNSHARED VPC LATTICE SERVICES ----------
   # # EventBridge Scheduler
@@ -810,6 +815,7 @@ Resources:
 
   # Function
   DisassociateUnsharedServiceFunction:
+    DependsOn: GitRepoToS3CustomResource
     Metadata:
       cfn_nag:
         rules_to_suppress:
