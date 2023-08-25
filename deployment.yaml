@@ -139,7 +139,7 @@ Resources:
 
           path = '/tmp/repo' 
 
-          s3ObjectNames = ['vpc_association', 'service_association', 'share_service', 'share_service_network', 'accept_associate_shared_service', 'disassociate_unshared_service']
+          s3ObjectNames = ['vpc_association', 'service_association', 'share_service', 'share_service_network', 'accept_shared_service', 'disassociate_unshared_service']
           s3ObjectExtension = 'zip'
 
           def lambda_handler(event, context):
