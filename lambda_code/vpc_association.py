@@ -2,6 +2,7 @@ import json
 import logging
 import time
 import sys
+import os
 
 from pip._internal import main
 
@@ -15,6 +16,8 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 vpc_lattice = boto3.client('vpc-lattice')
+ram = boto3.client("ram")
+my_account = os.getenv("MY_ACCOUNT")
 
 def list_all_service_networks():
     response = vpc_lattice.list_service_networks()
@@ -35,7 +38,35 @@ def get_service_network_for_stage(stage):
     associated to it.
     """
     service_networks = list_all_service_networks()
-    return next((sn for sn in service_networks if sn['name'] == stage.lower()), None)
+    """
+    Different way to obtain the stage depending the AWS Account owner:
+    - If the service network is part of the same Account, we get the stage from the tag.
+    - From a different Account, from the RAM share name
+    """
+    service_networks_stage = []
+    for sn in service_networks:
+        sn_account = sn['arn'].split(':')[4]
+        if sn_account == my_account:
+            tags = vpc_lattice.list_tags_for_resource(resourceArn=sn['arn'])['tags']
+            if 'stage' in tags.keys():
+                if tags['stage'] == stage:
+                    service_networks_stage.append(sn)
+        else:
+            # Getting Resource Share from Service Network ARN
+            ram_resource_share = ram.list_resources(
+                resourceOwner = 'OTHER-ACCOUNTS',
+                resourceArns = [sn['arn']]
+            )['resources'][0]['resourceShareArn']
+            # Getting stage from Resource Share Name
+            resource_share_name = ram.get_resource_shares(
+                resourceOwner = 'OTHER-ACCOUNTS',
+                resourceShareArns = [ram_resource_share]
+            )['resourceShares'][0]['name']
+            # We add the Service Network if it's part of the desired stage
+            if resource_share_name == stage:
+                service_networks_stage.append(sn)
+    
+    return next((sn for sn in service_networks_stage), None)
 
 def get_stage(event):
     tag_changes = event['detail']['requestParameters']['tagSet']['items']
@@ -103,7 +134,7 @@ def handle_delete_tags(event, context):
     associations = vpc_lattice.list_service_network_vpc_associations(
         vpcIdentifier=vpc_id
     )['items']
-    stage_associations = [a for a in associations if a['serviceNetworkName'] == stage]
+    stage_associations = [a for a in associations if a['serviceNetworkArn'] == get_service_network_for_stage(stage)['arn']]
     
     # We remove the VPC association
     delete_service_network_vpc_associations(stage_associations)
@@ -138,8 +169,6 @@ def delete_service_network_vpc_associations(associations):
     
 def lambda_handler(event, context):
     logger.info(f'Event: {json.dumps(event)}')
-    
-    print(event)
     event_type = event['detail']['eventName']
     
     if event_type == 'CreateTags':

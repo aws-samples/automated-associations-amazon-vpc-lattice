@@ -3,9 +3,6 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: VPC Lattice Automation - Deployment Templates
 
 Parameters:
-  GitRepo:
-    Type: String
-    Default: https://github.com/aws-samples/automated-associations-amazon-vpc-lattice
   VPCLatticeAssociation:
     Type: String
     Description: VPC Lattice association to automate (using tags)
@@ -175,7 +172,7 @@ Resources:
                   cfnresponse.send(event, context, cfnresponse.FAILED, response_data)
       Environment: 
         Variables:
-          GitRepo: !Ref GitRepo
+          GitRepo: https://github.com/aws-samples/automated-associations-amazon-vpc-lattice
           s3Bucket: !Ref CodeBucket
       Handler: index.lambda_handler
       Runtime: python3.8
@@ -233,7 +230,10 @@ Resources:
                   - vpc-lattice:GetServiceNetworkVpcAssociation
                   - vpc-lattice:CreateServiceNetworkVpcAssociation
                   - vpc-lattice:DeleteServiceNetworkVpcAssociation
+                  - vpc-lattice:ListTagsForResource
                   - ec2:DescribeVpcs
+                  - ram:ListResources
+                  - ram:GetResourceShares
                 Resource:
                   - "*"
       ManagedPolicyArns:
@@ -272,6 +272,9 @@ Resources:
       Timeout: 90
       Role: !GetAtt VPCAssociationLambdaFuntionRole.Arn
       Handler: vpc_association.lambda_handler
+      Environment:
+        Variables:
+          MY_ACCOUNT: !Ref AWS::AccountId
       Code:
         S3Bucket: !Ref CodeBucket
         S3Key: lambdacode/vpc_association.zip
@@ -335,8 +338,11 @@ Resources:
                   - vpc-lattice:ListServiceNetworkServiceAssociations
                   - vpc-lattice:CreateServiceNetworkServiceAssociation
                   - vpc-lattice:DeleteServiceNetworkServiceAssociation
+                  - vpc-lattice:ListTagsForResource
                   - ssm:GetParameter
                   - ssm:PutParameter
+                  - ram:ListResources
+                  - ram:GetResourceShares
                 Resource:
                   - "*"
       ManagedPolicyArns:
@@ -355,16 +361,16 @@ Resources:
       LogGroupName: !Sub /aws/lambda/${ServiceAssociationFunction}
       RetentionInDays: 7
 
-  # Systems Manager Parameter
-  ServiceAssociationParameter:
+  # Systems Manager Parameter (StageList)
+  ServiceAssociationStageListParameter:
     Type: AWS::SSM::Parameter
     Condition: ServiceAssociation
     Properties:
-      Name: 'service-association-current-stage'
-      Description: Current stage in the VPC Lattice service association automation
+      Name: 'service-association-current-stages'
+      Description: Current stages in the VPC Lattice service association automation
       Type: String
       Value: ' '
-
+  
   # Function
   ServiceAssociationFunction:
     DependsOn: GitRepoToS3CustomResource
@@ -387,7 +393,8 @@ Resources:
       Handler: service_association.lambda_handler
       Environment:
         Variables:
-          PARAMETER_NAME: 'service-association-current-stage'
+          PARAMETER_STAGES: 'service-association-current-stages'
+          MY_ACCOUNT: !Ref AWS::AccountId
       Code:
         S3Bucket: !Ref CodeBucket
         S3Key: lambdacode/service_association.zip
