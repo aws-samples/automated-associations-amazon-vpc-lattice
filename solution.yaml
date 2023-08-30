@@ -5,7 +5,7 @@ Description: VPC Lattice Automation - Deployment Templates
 Parameters:
   VPCLatticeAssociation:
     Type: String
-    Description: VPC Lattice association to automate (using tags)
+    Description: Which VPC Lattice association to automate (from changes in tag "stage")
     AllowedValues:
       - VPC
       - SERVICE
