@@ -13,7 +13,7 @@ Parameters:
       - NONE
   ShareAutomation:
     Type: String
-    Description: VPC Lattice resource you want to share (using tags)
+    Description: Which VPC Lattice resource you want to share (from changes in tag "stage")
     AllowedValues:
       - SERVICE_NETWORK
       - SERVICE
@@ -24,10 +24,10 @@ Parameters:
     Description: (If automating VPC Lattice RAM share) Provide list of AWS Accounts to share your resources, divided by comma (Account1,Account2)
   ShareAutomationAllowedStages:
     Type: String
-    Description: (If automating VPC Lattice RAM share) Provide list of stages allowed to shared, divided by comma (stage1,stage2)
+    Description: (If automating VPC Lattice RAM share) Provide list of stages allowed to share, divided by comma (stage1,stage2)
   AcceptShareAutomation:
     Type: String
-    Description: VPC Lattice resource (shared with you) you want to accept.
+    Description: Which VPC Lattice resource (shared with you) you want to accept.
     AllowedValues:
       - SERVICE_NETWORK
       - SERVICE

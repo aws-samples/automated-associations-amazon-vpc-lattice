@@ -19,24 +19,52 @@ The following inputs will determine which automations are built:
 
 | Name | Description | Allowed Values |
 |------|-------------|----------------|
-| <a name="VPCLatticeAssociation"></a> | Which VPC Lattice association to automate (from changes in tag "stage"). | `VPC`, `SERVICE`, `BOTH`, `NONE` |
+| **VPCLatticeAssociation** | Which VPC Lattice association to automate (from changes in tag `stage`). | `VPC` - `SERVICE` - `BOTH` - `NONE` |
+| **ShareAutomation** | Which VPC Lattice resource you want to share (from changes in tag `stage`) | `SERVICE_NETWORK` - `SERVICE` - `BOTH` - `NONE` |
+| **ShareAutomationAllowedAccounts** | *If automating VPC Lattice RAM share* List of AWS Accounts to share your resources, divided by comma (Account1,Account2) |  |
+| **ShareAutomationAllowedAccounts** | *If automating VPC Lattice RAM share* Provide list of stages allowed to share, divided by comma (stage1,stage2) |  |
+| **AcceptShareAutomation** | Which VPC Lattice resource (shared with you) you want to accept. | `SERVICE_NETWORK` - `SERVICE` - `BOTH` - `NONE` |
+| **AcceptShareAutomationAllowedAccounts** | *If automating RAM share acceptance* Provide list of AWS Accounts to accept resources shared, divided by comma (Account1,Account2) |  |
+| **AcceptShareAutomationAllowedStages** | *If automating RAM share acceptance* Provide list of stages allowed to accept shared resources, divided by comma (stage1,stage2) |  |
 
 In the section **VPC Lattice common architectures** you will find some examples of multi-Account environments and which specific automations to build in each Account (inputs to include in each CloudFormation deployment) to have the desired functionality.
 
 ## Automations
 
-* VPC Lattice VPC associations anytime the VPC's tags are updated.
-    * For VPC Lattice service networks in the same AWS Account, the tag `stage` will determine if the association is done or not.
-    * For VPC Lattice service networks shared via RAM, the RAM share name will determine if the association is done or not.
-    * Given a VPC can only be associated with one VPC Lattice service network, if several ones can be potentially associated only one will be selected randomly (*local* service networks will have preference).
-* VPC Lattice service associations anytime the VPC Lattice service's tags are updated.
-    * For VPC Lattice service networks in the same AWS Account, the tag `stage` will determine if the association is done or not.
-    * For VPC Lattice service networks shared via RAM, the RAM share name will determine if the association is done or not.
-    * Several associations are supported, in that case the tag `stage` will require the use of the symbol `+` to separate the different stages - for example *prod+test*.
-* Sharing VPC Lattice service 
+### VPC Lattice VPC association
 
+In this automation, the EventBridge rule will obtain changes in VPC tags. Once the tag `stage` is created/updated/removed from any of the VPCs in the Account, the following actions will be automated by a Lambda function:
+
+* Scan all the VPC Lattice service networks in the Account (either owned or shared) and determine which ones share the same *stage*.
+    * For service networks owned by the same Account, the tag `stage` will be checked.
+    * For service networks shared via RAM, the RAM share name will be checked. This name should be similar to the key of the VPC tag `stage`.
+* Given a VPC can only be associated with one service network, if several ones are scanned, the one to be associated will be selected randomly (service networks owned by the same AWS Account will be preferred).
+* Updating the `stage` tag will remove the current association (if exists), and create a new one - if any service network with the same `stage` tag/RAM share name exits.
+* Removing the `stage` tag will remove the association.
+
+### VPC Lattice service association
+
+In this automation, the EventBridge rule will obtain changes in VPC Lattice service tags. Once the tag `stage` is created/updated/removed from any of the services in the Account, the following actions will be automated by a Lambda function:
+
+* Scan all the VPC Lattice service networks in the Account (either owned or shared) and determine which ones share the same *stage*.
+    * For service networks owned by the same Account, the tag `stage` will be checked.
+    * For service networks shared via RAM, the RAM share name will be checked. This name should be similar to the key of the VPC tag `stage`.
+* As a VPC Lattice service can be associated with multiple service networks, the association will be created with all the service networks scanned.
+* Several stages are also supported: the tag `stage` will require the use of the symbol `+` to separate the different stages - for example *prod+test*.
+* Updating the `stage` tag will remove the current association (if exists), and create a new one - if any service network with the same `stage` tag/RAM share name exits.
+* Removing the `stage` tag will remove the association.
+* An [AWS Systems Manager](https://aws.amazon.com/systems-manager/) Parameter is used to store the latest set of stages that are associated with a specific service.
+
+### VPC Lattice service and service network RAM share
+
+In this automation, the EventBridge rule will obtain changes in VPC Lattice service or service network tags. You can define a list of AWS Account and stages allowed for the resource share - as an extra step of control. Once the tag `stage` is created/updated/removed from any of the resources in the Account, the following actions will be automated by a Lambda function:
+
+* If the `stage` tag configured is part of the allowed stages, the tagged resource (VPC Lattice service or service network) is shared using RAM to those AWS Accounts configured in the allowed Accounts list.
+* The name of the RAM share will be the value of the `stage` tag, so the stage information is shared between Accounts.
+* Update the `stage` tag will remove the current RAM share (if exits), and create a new one - if the new stage value is allowed.
+* Removing the `stage` tag will remove the RAM share.
 
 ## VPC Lattice common architectures
 
 
-## References 
+## References 
