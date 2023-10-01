@@ -122,7 +122,7 @@ In this model, the VPC Lattice service networks are owned by a central AWS Accou
 
 ![CentralizedServiceNetworks](/images/centralized_service_network.png)
 
-### Distributed VPC Lattice service networks
+### Distributed VPC Lattice service networks
 
 In this model, the VPC Lattice service networks are owned by the spoke AWS Accounts that want to consume VPC Lattice services (each Spoke will have its own service network). Depending the role of the AWS Account, the automation to build will be the following one:
 
