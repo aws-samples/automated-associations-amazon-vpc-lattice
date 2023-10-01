@@ -612,42 +612,42 @@ Resources:
         S3Key: lambdacode/share_service_network.zip
 
   # ---------- ACCEPT SHARED VPC LATTICE SERVICES ----------
-  # # EventBridge Scheduler
-  # AcceptSharedServiceScheduler:
-  #   Type: AWS::Scheduler::Schedule
-  #   Condition: AcceptSharedService
-  #   Properties:
-  #     Name: "accept-shared-services"
-  #     FlexibleTimeWindow:
-  #       Mode: "OFF"
-  #     ScheduleExpression: "rate(1 minute)"
-  #     Target:
-  #       Arn: !GetAtt AcceptSharedServiceFunction.Arn
-  #       RoleArn: !GetAtt AcceptSharedServiceSchedulerRole.Arn
+  # EventBridge Scheduler
+  AcceptSharedServiceScheduler:
+    Type: AWS::Scheduler::Schedule
+    Condition: AcceptSharedService
+    Properties:
+      Name: "accept-shared-services"
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      ScheduleExpression: "rate(1 minute)"
+      Target:
+        Arn: !GetAtt AcceptSharedServiceFunction.Arn
+        RoleArn: !GetAtt AcceptSharedServiceSchedulerRole.Arn
 
-  # AcceptSharedServiceSchedulerRole:
-  #   Type: AWS::IAM::Role
-  #   Condition: AcceptSharedService
-  #   Properties:
-  #     Description: "EventBridge Scheduler - IAM Role (AcceptSharedService)"
-  #     RoleName: accept-scheduler-shared-services
-  #     AssumeRolePolicyDocument:
-  #       Version: "2012-10-17"
-  #       Statement:
-  #         - Effect: Allow
-  #           Principal:
-  #             Service:
-  #               - scheduler.amazonaws.com
-  #           Action:
-  #             - sts:AssumeRole
-  #     Policies:
-  #       - PolicyName: accept-scheduler-shared-services
-  #         PolicyDocument:
-  #           Version: "2012-10-17"
-  #           Statement:
-  #             - Effect: Allow
-  #               Action: "lambda:InvokeFunction"
-  #               Resource: !GetAtt AcceptSharedServiceFunction.Arn
+  AcceptSharedServiceSchedulerRole:
+    Type: AWS::IAM::Role
+    Condition: AcceptSharedService
+    Properties:
+      Description: "EventBridge Scheduler - IAM Role (AcceptSharedService)"
+      RoleName: accept-scheduler-shared-services
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - scheduler.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: accept-scheduler-shared-services
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: "lambda:InvokeFunction"
+                Resource: !GetAtt AcceptSharedServiceFunction.Arn
 
   # IAM Roles (Lambda function)
   AcceptSharedServiceLambdaFuntionRole:
@@ -739,43 +739,43 @@ Resources:
         S3Key: lambdacode/accept_shared_service.zip
   
   # ---------- DISASSOCIATE UNSHARED VPC LATTICE SERVICES ----------
-  # # EventBridge Scheduler
-  # DisassociateUnsharedServiceScheduler:
-  #   Type: AWS::Scheduler::Schedule
-  #   Condition: AcceptSharedService
-  #   Properties:
-  #     Name: "disassociate-unshared-services"
-  #     Description: "Checking VPC Lattice services unshared with the Account."
-  #     FlexibleTimeWindow:
-  #       Mode: "OFF"
-  #     ScheduleExpression: "rate(2 minute)"
-  #     Target:
-  #       Arn: !GetAtt DisassociateUnsharedServiceFunction.Arn
-  #       RoleArn: !GetAtt DisassociateUnsharedServiceSchedulerRole.Arn
+  # EventBridge Scheduler
+  DisassociateUnsharedServiceScheduler:
+    Type: AWS::Scheduler::Schedule
+    Condition: AcceptSharedService
+    Properties:
+      Name: "disassociate-unshared-services"
+      Description: "Checking VPC Lattice services unshared with the Account."
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      ScheduleExpression: "rate(2 minute)"
+      Target:
+        Arn: !GetAtt DisassociateUnsharedServiceFunction.Arn
+        RoleArn: !GetAtt DisassociateUnsharedServiceSchedulerRole.Arn
 
-  # DisassociateUnsharedServiceSchedulerRole:
-  #     Type: AWS::IAM::Role
-  #     Condition: AcceptSharedService
-  #     Properties:
-  #       Description: "EventBridge Scheduler - IAM Role (Disassociated Shared Services)"
-  #       RoleName: disassociate-shared-services
-  #       AssumeRolePolicyDocument:
-  #         Version: "2012-10-17"
-  #         Statement:
-  #           - Effect: Allow
-  #             Principal:
-  #               Service:
-  #                 - scheduler.amazonaws.com
-  #             Action:
-  #               - sts:AssumeRole
-  #       Policies:
-  #         - PolicyName: disassociate-shared-services
-  #           PolicyDocument:
-  #             Version: "2012-10-17"
-  #             Statement:
-  #               - Effect: Allow
-  #                 Action: "lambda:InvokeFunction"
-  #                 Resource: !GetAtt DisassociateUnsharedServiceFunction.Arn
+  DisassociateUnsharedServiceSchedulerRole:
+      Type: AWS::IAM::Role
+      Condition: AcceptSharedService
+      Properties:
+        Description: "EventBridge Scheduler - IAM Role (Disassociated Shared Services)"
+        RoleName: disassociate-shared-services
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - scheduler.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: disassociate-shared-services
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action: "lambda:InvokeFunction"
+                  Resource: !GetAtt DisassociateUnsharedServiceFunction.Arn
 
   # IAM Role (Lambda function)
   DisassociateUnsharedServiceLambdaFuntionRole:
